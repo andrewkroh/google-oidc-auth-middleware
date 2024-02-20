@@ -1,0 +1,19 @@
+displayName: Google OIDC Auth
+type: middleware
+iconPath: .assets/icons8-google-160.png
+
+import: github.com/andrewkroh/google-oidc-auth-middleware
+
+summary: Google OpenID Connect authentication middleware.
+
+testData:
+  oidc:
+    clientID: example.apps.googleusercontent.com
+    clientSecret: fake-secret
+  cookie:
+    secret: mySecretKey
+  authorized:
+    emails:
+      - name@gmail.com
+    domains:
+      - example.com
