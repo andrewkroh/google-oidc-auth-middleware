@@ -159,10 +159,13 @@ type cookieAuthzHandler struct {
 
 func (h *cookieAuthzHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Is the request already authorized with a cookie?
-	ac, err := newAuthCookieFromRequest(r, h.cookieSigner, h.cookieName)
+	ac, loginHint, err := newAuthCookieFromRequest(r, h.cookieSigner, h.cookieName)
 	if err != nil {
 		if !errors.Is(err, http.ErrNoCookie) {
 			h.debug.Printf("Invalid cookie in request from addr=%s: %v", r.RemoteAddr, err)
+		}
+		if loginHint != "" {
+			r = r.WithContext(context.WithValue(r.Context(), "login_hint", loginHint))
 		}
 		goto AUTH
 	}
@@ -236,6 +239,9 @@ func (h *authnRedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	q.Set("redirect_uri", redirectURI(r, h.config.OIDC.CallbackPath))
 	q.Set("nonce", n)
 	q.Set("state", n)
+	if loginHint, ok := r.Context().Value("login_hint").(string); ok {
+		q.Set("login_hint", loginHint)
+	}
 	u.RawQuery = q.Encode()
 
 	http.Redirect(w, r, u.String(), http.StatusTemporaryRedirect)
@@ -392,22 +398,21 @@ func newAuthCookie(signer *cookieSigner, expires time.Time, email string) (strin
 	return value, nil
 }
 
-func newAuthCookieFromRequest(r *http.Request, signer *cookieSigner, cookieName string) (*AuthCookie, error) {
+func newAuthCookieFromRequest(r *http.Request, signer *cookieSigner, cookieName string) (c *AuthCookie, loginHint string, err error) {
 	cookie, err := r.Cookie(cookieName)
 	if err != nil {
-		return nil, fmt.Errorf("cookie %s not found in request: %w", cookieName, err)
+		return nil, "", fmt.Errorf("cookie %s not found in request: %w", cookieName, err)
 	}
 
-	var c *AuthCookie
 	if err = signer.Decode(cookie.Value, &c); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	if c.Expired() {
-		return nil, fmt.Errorf("cookie for user %q expire: %w", c.Email, errExpiredCookie)
+		return nil, c.Email, fmt.Errorf("cookie for user %q expired: %w", c.Email, errExpiredCookie)
 	}
 
-	return c, nil
+	return c, "", nil
 }
 
 func (c *AuthCookie) Expired() bool {
