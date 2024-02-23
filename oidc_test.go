@@ -36,7 +36,7 @@ func TestCookieAuthzHandler_ServeHTTP(t *testing.T) {
 
 	t.Run("logon_hint is added for expired cookies", func(t *testing.T) {
 		r := httptest.NewRequest("GET", "/resource?foo=bar", nil)
-		v, err := newAuthCookie(h.cookieSigner, time.Now().Add(-1*time.Hour), email)
+		v, err := newAuthCookie(h.cookieSigner, time.Now().Add(-1*time.Hour), email, "")
 		if err != nil {
 			t.Fatal(err)
 		}

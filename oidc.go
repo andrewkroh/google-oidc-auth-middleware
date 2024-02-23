@@ -33,6 +33,8 @@ var (
 	errInvalidCookieSignature    = errors.New("invalid cookie signature")
 	errConfigMissingCookieSecret = errors.New("cookie.secret must be configured")
 	errConfigMissingAuthorized   = errors.New("authorized.emails and/or authorized.domains must be configured")
+	errEmailNotVerified          = errors.New("email address is not verified by OIDC provider")
+	errEmailClaimMissing         = errors.New("email address claim missing from OIDC id_token")
 )
 
 // Config the plugin configuration.
@@ -170,15 +172,15 @@ func (h *cookieAuthzHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		goto AUTH
 	}
 
-	if isEmailAuthorized(ac.Email, h.allowEmails, h.allowDomains) {
-		h.debug.Printf("Received authorized request from user=%s at addr=%s for path=%s",
-			ac.Email, r.RemoteAddr, r.URL.Path)
+	if isAuthorized(ac.Email, ac.Domain, h.allowEmails, h.allowDomains) {
+		h.debug.Printf("Received authorized request from user=%s of domain=%s at addr=%s for path=%s",
+			ac.Email, ac.Domain, r.RemoteAddr, r.URL.Path)
 		w.Header().Set("X-Forwarded-User", ac.Email)
 		h.next.ServeHTTP(w, r)
 		return
 	} else {
-		h.debug.Printf("Request not authorized for user=%s at addr=%s for path=%s",
-			ac.Email, r.RemoteAddr, r.URL.Path)
+		h.debug.Printf("Request not authorized for user=%s of domain=%s at addr=%s for path=%s",
+			ac.Email, ac.Domain, r.RemoteAddr, r.URL.Path)
 		http.Error(w, ac.Email+" is not authorized", http.StatusUnauthorized)
 		return
 	}
@@ -302,14 +304,14 @@ func (h *oidcCallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	email, err := parseJWTEmail(token.IDToken)
+	email, domain, err := parseJWT(token.IDToken)
 	if err != nil {
 		h.debug.Println("Failed parsing email claim from id_token", err)
 		http.Error(w, "Not authorized", http.StatusUnauthorized)
 		return
 	}
 
-	if err = h.setCookie(w, email); err != nil {
+	if err = h.setCookie(w, email, domain); err != nil {
 		h.debug.Printf("failed to build signed cookie: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -356,10 +358,10 @@ func (h *oidcCallbackHandler) exchangeToken(code, redirectURI string) (*oauthTok
 	return token, nil
 }
 
-func (h *oidcCallbackHandler) setCookie(w http.ResponseWriter, email string) error {
+func (h *oidcCallbackHandler) setCookie(w http.ResponseWriter, email, domain string) error {
 	expires := time.Now().Add(h.config.Cookie.duration)
 
-	ac, err := newAuthCookie(h.signer, expires, email)
+	ac, err := newAuthCookie(h.signer, expires, email, domain)
 	if err != nil {
 		return err
 	}
@@ -384,12 +386,14 @@ func (h *oidcCallbackHandler) setCookie(w http.ResponseWriter, email string) err
 type AuthCookie struct {
 	ExpiresUnixSec int64  `json:"exp"`
 	Email          string `json:"email"`
+	Domain         string `json:"domain,omitempty"`
 }
 
-func newAuthCookie(signer *cookieSigner, expires time.Time, email string) (string, error) {
+func newAuthCookie(signer *cookieSigner, expires time.Time, email, domain string) (string, error) {
 	c := &AuthCookie{
 		ExpiresUnixSec: expires.Unix(),
 		Email:          email,
+		Domain:         domain,
 	}
 	value, err := signer.Encode(c)
 	if err != nil {
@@ -503,18 +507,12 @@ func toMap[T comparable](items []T) map[T]struct{} {
 	return m
 }
 
-// isEmailAuthorized returns true if the email address is found in allowedEmails
-// or the domain in the email address is found in allowedDomains.
-func isEmailAuthorized(email string, allowedEmails, allowedDomains map[string]struct{}) bool {
+// isAuthorized returns true if the email address is found in allowedEmails
+// or domain is found in allowedDomains.
+func isAuthorized(email, domain string, allowedEmails, allowedDomains map[string]struct{}) bool {
 	if _, foundEmail := allowedEmails[email]; foundEmail {
 		return true
 	}
-
-	parts := strings.Split(email, "@")
-	if len(parts) != 2 {
-		return false
-	}
-	domain := parts[1]
 
 	_, foundDomain := allowedDomains[domain]
 	return foundDomain
@@ -529,28 +527,46 @@ func nonce() (string, error) {
 	return hex.EncodeToString(nonce), nil
 }
 
-// parseJWTEmail parses a trusted JWT to extract the email claim. This assumes
-// that the JWT comes from a trusted source (i.e. we get it directly from the
-// OIDC provider over HTTPS).
-func parseJWTEmail(idToken string) (string, error) {
+// parseJWT parses a trusted JWT to extract the email and domain (hd)
+// claim. This assumes that the JWT comes from a trusted source (i.e. we get it
+// directly from the OIDC provider over HTTPS).
+//
+// The email_verified claim must be present and true, otherwise an error is
+// returned.
+//
+// The domain value is the domain associated with the Google Workspace
+// or Cloud organization of the user. Provided only if the user belongs to a
+// Google Cloud organization. You must check this claim when restricting access
+// to a resource to only members of certain domains. The absence of this claim
+// indicates that the account does not belong to a Google hosted domain.
+func parseJWT(idToken string) (email, domain string, err error) {
 	parts := strings.Split(idToken, ".")
 	if len(parts) != 3 {
-		return "", errors.New("token contains an invalid number of segments")
+		return "", "", errors.New("token contains an invalid number of segments")
 	}
 
 	claims, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	var claimMap map[string]any
 	dec := json.NewDecoder(bytes.NewReader(claims))
 	dec.UseNumber()
 	if err = dec.Decode(&claimMap); err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return claimMap["email"].(string), nil
+	if emailVerified, _ := claimMap["email_verified"].(bool); !emailVerified {
+		return "", "", errEmailNotVerified
+	}
+	email, _ = claimMap["email"].(string)
+	if email == "" {
+		return "", "", errEmailClaimMissing
+	}
+	domain, _ = claimMap["hd"].(string)
+
+	return email, domain, nil
 }
 
 // redirectURI builds a URL based on the request scheme/host plus the given
