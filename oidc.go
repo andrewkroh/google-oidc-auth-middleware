@@ -367,10 +367,12 @@ func (h *oidcCallbackHandler) setCookie(w http.ResponseWriter, email, domain str
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     h.config.Cookie.Name,
-		Value:    ac,
-		Path:     h.config.Cookie.Path,
-		Expires:  expires,
+		Name:  h.config.Cookie.Name,
+		Value: ac,
+		Path:  h.config.Cookie.Path,
+		// Remember the user's email for 120 days so that we can give a
+		// login_hint to OIDC even after their authorization expires.
+		Expires:  expires.Add(120 * 24 * time.Hour),
 		Secure:   !h.config.Cookie.Insecure,
 		HttpOnly: true,
 	})
