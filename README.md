@@ -26,6 +26,13 @@ client secret. See the [Google developer docs](https://developers.google.com/ide
 | authorized.emails  |                | X        | List of allowed email addresses.                                                                                                                                                  |
 | authorized.domains |                | X        | List of allowed domains.                                                                                                                                                          |
 
+## Headers
+
+*X-Forwarded-User*
+
+When the middleware proxies a request it adds an `X-Fowarded-User` header
+containing the user's email address.
+
 ## Example config
 
 Static config
