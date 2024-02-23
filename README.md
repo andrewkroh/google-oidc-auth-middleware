@@ -25,6 +25,7 @@ client secret. See the [Google developer docs](https://developers.google.com/ide
 | cookie.insecure    | false          |          | Set to true to omit the `Secure` attribute from cookies.                                                                                                                          |
 | authorized.emails  |                | X        | List of allowed email addresses.                                                                                                                                                  |
 | authorized.domains |                | X        | List of allowed domains.                                                                                                                                                          |
+| debug              | false          |          | Enable debug logging to stdout.
 
 ## Headers
 
@@ -44,7 +45,8 @@ experimental:
   plugins:
     google-oidc-auth-middleware:
       moduleName: "github.com/andrewkroh/google-oidc-auth-middleware"
-      version: v0.0.1
+      # Populate this with the latest release tag.
+      version: vX.Y.Z
 ```
 
 Dynamic config
