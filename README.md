@@ -1,7 +1,7 @@
 # Traefik Google OIDC Auth Middleware
 
 This is a Traefik middleware plugin that authenticates users with Google OpenID
-Connect, and then checks that their email address of Google Workspace domain is 
+Connect, and then checks that their email address or Google Workspace domain is 
 authorized.
 
 ## Requirements
