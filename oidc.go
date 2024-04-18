@@ -175,7 +175,7 @@ func (h *cookieAuthzHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isAuthorized(ac.Email, ac.Domain, h.allowEmails, h.allowDomains) {
 		h.debug.Printf("Received authorized request from user=%s of domain=%s at addr=%s for path=%s",
 			ac.Email, ac.Domain, r.RemoteAddr, r.URL.Path)
-		w.Header().Set("X-Forwarded-User", ac.Email)
+		r.Header.Set("X-Forwarded-User", ac.Email)
 		h.next.ServeHTTP(w, r)
 		return
 	} else {
