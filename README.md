@@ -50,7 +50,7 @@ CLI example:
 The resulting access log will contain a `request_X-Forwarded-User` field.
 
 ```json
-    "request_X-Forwarded-User": "andrew.kroh@elastic.co"
+    "request_X-Forwarded-User": "name@gmail.com"
 ```
 
 See [Limiting the Fields/Including Headers](https://doc.traefik.io/traefik/observability/access-logs/#limiting-the-fieldsincluding-headers) for more details.
