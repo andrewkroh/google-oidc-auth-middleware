@@ -33,7 +33,28 @@ client secret. See the [Google developer docs](https://developers.google.com/ide
 *X-Forwarded-User*
 
 When the middleware proxies a request it adds an `X-Fowarded-User` header
-containing the user's email address.
+containing the user's email address. This can be used by the downstream service
+to identify the authenticated user.
+
+If you want your JSON access logs to include the user's email address then
+configure the access log to retain the `X-Forwarded-User` header. Here is a
+CLI example:
+
+```
+# Adding X-Forwarded-User to JSON access logs.
+--accesslog
+--accesslog.format=json
+--accesslog.fields.headers.names.X-Forwarded-User=keep
+```
+
+The resulting access log will contain a `request_X-Forwarded-User` field.
+
+```json
+    "request_X-Forwarded-User": "andrew.kroh@elastic.co"
+```
+
+See [Limiting the Fields/Including Headers](https://doc.traefik.io/traefik/observability/access-logs/#limiting-the-fieldsincluding-headers) for more details.
+
 
 ## Example config
 
