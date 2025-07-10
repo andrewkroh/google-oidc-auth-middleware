@@ -25,6 +25,15 @@ const (
 
 var cookieSecret = getEnvOrDefault("COOKIE_SECRET", "test-hmac-secret")
 
+func TestMain(m *testing.M) {
+	if os.Getenv("INTEG_TEST") == "" {
+		fmt.Println("Skipping integration tests: INTEG_TEST environment variable not set.")
+		return
+	}
+
+	os.Exit(m.Run())
+}
+
 // TestUnauthorizedAccess verifies that unauthorized requests are redirected to Google OAuth.
 func TestUnauthorizedAccess(t *testing.T) {
 	t.Parallel()

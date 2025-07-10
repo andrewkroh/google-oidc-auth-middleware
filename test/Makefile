@@ -10,7 +10,7 @@ test-unit:
 	@docker-compose up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 10
-	@go test -v -count=1 ./... -short
+	@INTEG_TEST=1 go test -v -count=1 ./...
 	@docker-compose down
 
 # Start services for manual testing
