@@ -27,6 +27,7 @@ services:
     depends_on:
       - protected
       - unprotected
+      - protected-prompt
 
   protected:
     image: nginx:alpine
@@ -42,10 +43,32 @@ services:
       - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.oidc.clientID=${GOOGLE_CLIENT_ID}"
       - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.oidc.clientSecret=${GOOGLE_CLIENT_SECRET}"
       - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.cookie.secret=${COOKIE_SECRET}"
+      - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.cookie.path=/protected"
       - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.authorized.emails[0]=${TEST_EMAIL}"
       - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.authorized.domains[0]=${TEST_DOMAIN}"
       - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.debug=true"
       - "traefik.http.middlewares.strip-prefix.stripprefix.prefixes=/protected"
+
+  protected-prompt:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/protected:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.protected-prompt.rule=PathPrefix(`/protected-prompt`)"
+      - "traefik.http.routers.protected-prompt.entrypoints=web"
+      - "traefik.http.routers.protected-prompt.middlewares=google-auth-prompt,strip-prefix-prompt"
+      - "traefik.http.middlewares.google-auth-prompt.plugin.google-oidc-auth-middleware.oidc.prompt=select_account"
+      - "traefik.http.middlewares.google-auth-prompt.plugin.google-oidc-auth-middleware.oidc.callbackPath=/protected-prompt/oidc/callback"
+      - "traefik.http.middlewares.google-auth-prompt.plugin.google-oidc-auth-middleware.oidc.clientID=${GOOGLE_CLIENT_ID}"
+      - "traefik.http.middlewares.google-auth-prompt.plugin.google-oidc-auth-middleware.oidc.clientSecret=${GOOGLE_CLIENT_SECRET}"
+      - "traefik.http.middlewares.google-auth-prompt.plugin.google-oidc-auth-middleware.cookie.secret=${COOKIE_SECRET}"
+      - "traefik.http.middlewares.google-auth-prompt.plugin.google-oidc-auth-middleware.cookie.path=/protected-prompt"
+      - "traefik.http.middlewares.google-auth-prompt.plugin.google-oidc-auth-middleware.authorized.emails[0]=${TEST_EMAIL}"
+      - "traefik.http.middlewares.google-auth-prompt.plugin.google-oidc-auth-middleware.authorized.domains[0]=${TEST_DOMAIN}"
+      - "traefik.http.middlewares.google-auth-prompt.plugin.google-oidc-auth-middleware.debug=true"
+      - "traefik.http.middlewares.strip-prefix-prompt.stripprefix.prefixes=/protected-prompt"
 
   unprotected:
     image: nginx:alpine

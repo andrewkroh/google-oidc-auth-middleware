@@ -69,6 +69,12 @@ type OIDCConfig struct {
 
 	// The path where the OIDC provider will redirect user after authenticating.
 	CallbackPath string
+
+	// Prompt is an optional, space-delimited, case-sensitive list of prompts to
+	// present the user. If you don't specify this parameter, the user will be
+	// prompted only the first time your project requests access.
+	// Possible values are: 'none', 'consent', 'select_account'.
+	Prompt string
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -243,6 +249,9 @@ func (h *authnRedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	q.Set("state", n)
 	if loginHint, ok := r.Context().Value("login_hint").(string); ok {
 		q.Set("login_hint", loginHint)
+	}
+	if h.config.OIDC.Prompt != "" {
+		q.Set("prompt", h.config.OIDC.Prompt)
 	}
 	u.RawQuery = q.Encode()
 
