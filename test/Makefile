@@ -7,16 +7,16 @@ test: test-unit
 test-unit:
 	@echo "Running unit integration tests..."
 	@if [ ! -f .env ]; then echo "❌ Please create .env file from .env.example"; exit 1; fi
-	@docker-compose up -d
+	@docker compose up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 10
 	@INTEG_TEST=1 go test -v -count=1 ./...
-	@docker-compose down
+	@docker compose down
 
 # Start services for manual testing
 start:
 	@echo "Starting services for manual testing..."
-	@docker-compose up -d
+	@docker compose up -d
 	@echo "✅ Services started:"
 	@echo "  Protected app: http://localhost/protected"
 	@echo "  Unprotected app: http://localhost"
@@ -26,9 +26,9 @@ start:
 
 # Stop services
 stop:
-	@docker-compose down
+	@docker compose down
 
 # Clean up everything
 clean:
-	@docker-compose down -v --remove-orphans
+	@docker compose down -v --remove-orphans
 	@docker system prune -f

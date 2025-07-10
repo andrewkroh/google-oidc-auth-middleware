@@ -21,9 +21,6 @@ jobs:
       - name: Unit Test
         run: go test ./...
 
-      - name: Set up Docker Compose
-        uses: docker/setup-compose-action@v1
-
       - name: Integration Test
         run: |
           cp .env.example .env
