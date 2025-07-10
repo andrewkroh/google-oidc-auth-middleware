@@ -20,7 +20,8 @@ import (
 )
 
 const (
-	protectedURL = "http://localhost/protected"
+	protectedURL       = "http://localhost/protected"
+	protectedPromptURL = "http://localhost/protected-prompt"
 )
 
 var cookieSecret = getEnvOrDefault("COOKIE_SECRET", "test-hmac-secret")
@@ -85,6 +86,35 @@ func TestUnauthorizedAccess(t *testing.T) {
 	}
 	if !csrfCookie.HttpOnly {
 		t.Error("CSRF cookie HttpOnly got false, want true")
+	}
+}
+
+// TestUnauthorizedAccessWithPrompt verifies that unauthorized requests are redirected
+// to Google OAuth with the prompt parameter.
+func TestUnauthorizedAccessWithPrompt(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Don't follow redirects - we want to examine them.
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resp, err := client.Get(protectedPromptURL)
+	if err != nil {
+		t.Fatalf("GET %q failed: %v", protectedPromptURL, err)
+	}
+	defer resp.Body.Close()
+
+	// Should get a redirect to Google OAuth.
+	if resp.StatusCode != http.StatusTemporaryRedirect {
+		t.Errorf("StatusCode got %d, want %d", resp.StatusCode, http.StatusTemporaryRedirect)
+	}
+
+	location := resp.Header.Get("Location")
+	if !strings.Contains(location, "prompt=select_account") {
+		t.Errorf("Location header got %q, want to contain 'prompt=select_account'", location)
 	}
 }
 
