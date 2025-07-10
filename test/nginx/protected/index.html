@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Protected Content - OIDC Auth Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 4px;
+            border: 1px solid #c3e6cb;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .headers-section {
+            margin-top: 30px;
+        }
+        .headers-section h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        .headers-content {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .back-link {
+            display: inline-block;
+            background-color: #6c757d;
+            color: white;
+            padding: 8px 16px;
+            text-decoration: none;
+            border-radius: 4px;
+            margin-top: 20px;
+            transition: background-color 0.3s;
+        }
+        .back-link:hover {
+            background-color: #545b62;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎉 Protected Content</h1>
+        
+        <div class="success-message">
+            <strong>Authentication Successful!</strong><br>
+            You have successfully logged in with Google OAuth.
+        </div>
+        
+        <div class="headers-section">
+            <h3>Request Headers:</h3>
+            <div class="headers-content">NGINX_HEADERS_PLACEHOLDER</div>
+        </div>
+        
+        <a href="/" class="back-link">← Back to Home</a>
+    </div>
+</body>
+</html>
