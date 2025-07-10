@@ -1,0 +1,33 @@
+name: Go
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Unit Test
+        run: go test ./...
+
+      - name: Integration Test
+        run: |
+          cp .env.example .env
+          make test
+        working-directory: test/
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: golang/govulncheck-action@v1

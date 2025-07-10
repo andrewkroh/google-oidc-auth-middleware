@@ -1,0 +1,57 @@
+services:
+  traefik:
+    image: traefik:v3
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --metrics.prometheus=true
+      - --metrics.prometheus.addEntryPointsLabels=true
+      - --metrics.prometheus.addrouterslabels=true
+      - --metrics.prometheus.addServicesLabels=true
+      - --log.level=DEBUG
+      - --experimental.localplugins.google-oidc-auth-middleware.modulename=github.com/andrewkroh/google-oidc-auth-middleware
+      - --accesslog
+      - --accesslog.format=json
+      - --accesslog.fields.headers.names.X-Forwarded-User=keep
+    ports:
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:18080:8080" # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ..:/plugins-local/src/github.com/andrewkroh/google-oidc-auth-middleware:ro
+    environment:
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+    depends_on:
+      - protected
+      - unprotected
+
+  protected:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/protected:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.protected.rule=PathPrefix(`/protected`)"
+      - "traefik.http.routers.protected.entrypoints=web"
+      - "traefik.http.routers.protected.middlewares=google-auth,strip-prefix"
+      - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.oidc.callbackPath=/protected/oidc/callback"
+      - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.oidc.clientID=${GOOGLE_CLIENT_ID}"
+      - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.oidc.clientSecret=${GOOGLE_CLIENT_SECRET}"
+      - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.cookie.secret=${COOKIE_SECRET}"
+      - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.authorized.emails[0]=${TEST_EMAIL}"
+      - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.authorized.domains[0]=${TEST_DOMAIN}"
+      - "traefik.http.middlewares.google-auth.plugin.google-oidc-auth-middleware.debug=true"
+      - "traefik.http.middlewares.strip-prefix.stripprefix.prefixes=/protected"
+
+  unprotected:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/root:/usr/share/nginx/html:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.unprotected.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.unprotected.entrypoints=web"
