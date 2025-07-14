@@ -170,7 +170,7 @@ func TestOAuthCallback(t *testing.T) {
 func TestBadSignatureCookie(t *testing.T) {
 	t.Parallel()
 
-	resp, err := makeRequestWithCookie(t, "invalid-cookie-value")
+	resp, err := makeRequestWithCookie(t, "invalid-cookie-value", time.Now().Add(1*time.Hour))
 	if err != nil {
 		t.Fatalf("makeRequestWithCookie failed: %v", err)
 	}
@@ -191,8 +191,8 @@ func TestBadSignatureCookie(t *testing.T) {
 func TestValidCookie(t *testing.T) {
 	t.Parallel()
 
-	// Make the request.
-	resp, err := makeRequestWithCookie(t, cookieSecret)
+	// Make the request with a valid expiration time.
+	resp, err := makeRequestWithCookie(t, cookieSecret, time.Now().Add(1*time.Hour))
 	if err != nil {
 		t.Fatalf("makeRequestWithCookie failed: %v", err)
 	}
@@ -203,7 +203,59 @@ func TestValidCookie(t *testing.T) {
 	}
 }
 
-func makeRequestWithCookie(t *testing.T, secret string) (*http.Response, error) {
+// TestExpiredCookieWithLoginHint tests that an expired cookie triggers OAuth
+// redirect with login_hint query parameter containing the user's email from the
+// cookie.
+func TestExpiredCookieWithLoginHint(t *testing.T) {
+	t.Parallel()
+
+	// Make the request with an expired cookie.
+	resp, err := makeRequestWithCookie(t, cookieSecret, time.Now().Add(-1*time.Hour))
+	if err != nil {
+		t.Fatalf("makeRequestWithCookie failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Should get a redirect to Google OAuth (expired cookie should trigger re-auth).
+	if resp.StatusCode != http.StatusTemporaryRedirect {
+		t.Errorf("StatusCode got %d, want %d", resp.StatusCode, http.StatusTemporaryRedirect)
+	}
+
+	location := resp.Header.Get("Location")
+	if location == "" {
+		t.Fatal("Location header is empty")
+	}
+
+	// Parse the redirect URL to check for login_hint parameter.
+	redirectURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("Failed to parse redirect URL %q: %v", location, err)
+	}
+
+	// Verify that login_hint query parameter is present and contains the user's email.
+	testEmail := "user@example.com" // This matches the email used in makeRequestWithCookie
+	loginHint := redirectURL.Query().Get("login_hint")
+	if loginHint == "" {
+		t.Error("login_hint query parameter not found in redirect URL")
+	} else if loginHint != testEmail {
+		t.Errorf("login_hint got %q, want %q", loginHint, testEmail)
+	}
+
+	// Also verify other expected OAuth parameters are present.
+	for _, want := range []string{
+		"accounts.google.com/o/oauth2/v2/auth",
+		"client_id=",
+		"redirect_uri=",
+		"response_type=code",
+		"scope=openid+email",
+	} {
+		if !strings.Contains(location, want) {
+			t.Errorf("Location header got %q, want to contain %q", location, want)
+		}
+	}
+}
+
+func makeRequestWithCookie(t *testing.T, secret string, expirationTime time.Time) (*http.Response, error) {
 	t.Helper()
 
 	// Create HTTP client with cookie jar.
@@ -225,7 +277,7 @@ func makeRequestWithCookie(t *testing.T, secret string) (*http.Response, error) 
 		Email          string `json:"email"`
 		Domain         string `json:"domain,omitempty"`
 	}{
-		ExpiresUnixSec: time.Now().Add(1 * time.Hour).Unix(), // Valid for 1 hour.
+		ExpiresUnixSec: expirationTime.Unix(),
 		Email:          "user@example.com",
 		Domain:         "example.com",
 	}
