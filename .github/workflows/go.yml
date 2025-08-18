@@ -16,7 +16,7 @@ jobs:
           go-version: stable
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Unit Test
         run: go test ./...
