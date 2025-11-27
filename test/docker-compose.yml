@@ -28,6 +28,7 @@ services:
       - protected
       - unprotected
       - protected-prompt
+      - protected-multisubdomain
 
   protected:
     image: nginx:alpine
@@ -69,6 +70,29 @@ services:
       - "traefik.http.middlewares.google-auth-prompt.plugin.google-oidc-auth-middleware.authorized.domains[0]=${TEST_DOMAIN}"
       - "traefik.http.middlewares.google-auth-prompt.plugin.google-oidc-auth-middleware.debug=true"
       - "traefik.http.middlewares.strip-prefix-prompt.stripprefix.prefixes=/protected-prompt"
+
+  # Service for testing multi-subdomain authentication with central redirect URI
+  protected-multisubdomain:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/protected:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.protected-multisubdomain.rule=PathPrefix(`/protected-multisubdomain`)"
+      - "traefik.http.routers.protected-multisubdomain.entrypoints=web"
+      - "traefik.http.routers.protected-multisubdomain.middlewares=google-auth-multisubdomain,strip-prefix-multisubdomain"
+      - "traefik.http.middlewares.google-auth-multisubdomain.plugin.google-oidc-auth-middleware.oidc.callbackPath=/protected-multisubdomain/oidc/callback"
+      - "traefik.http.middlewares.google-auth-multisubdomain.plugin.google-oidc-auth-middleware.oidc.redirectHost=auth.localhost"
+      - "traefik.http.middlewares.google-auth-multisubdomain.plugin.google-oidc-auth-middleware.oidc.clientID=${GOOGLE_CLIENT_ID}"
+      - "traefik.http.middlewares.google-auth-multisubdomain.plugin.google-oidc-auth-middleware.oidc.clientSecret=${GOOGLE_CLIENT_SECRET}"
+      - "traefik.http.middlewares.google-auth-multisubdomain.plugin.google-oidc-auth-middleware.cookie.secret=${COOKIE_SECRET}"
+      - "traefik.http.middlewares.google-auth-multisubdomain.plugin.google-oidc-auth-middleware.cookie.path=/protected-multisubdomain"
+      - "traefik.http.middlewares.google-auth-multisubdomain.plugin.google-oidc-auth-middleware.cookie.domain=.localhost"
+      - "traefik.http.middlewares.google-auth-multisubdomain.plugin.google-oidc-auth-middleware.authorized.emails[0]=${TEST_EMAIL}"
+      - "traefik.http.middlewares.google-auth-multisubdomain.plugin.google-oidc-auth-middleware.authorized.domains[0]=${TEST_DOMAIN}"
+      - "traefik.http.middlewares.google-auth-multisubdomain.plugin.google-oidc-auth-middleware.debug=true"
+      - "traefik.http.middlewares.strip-prefix-multisubdomain.stripprefix.prefixes=/protected-multisubdomain"
 
   unprotected:
     image: nginx:alpine
