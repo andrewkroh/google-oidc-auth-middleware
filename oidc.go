@@ -51,8 +51,10 @@ type CookieConfig struct {
 	Secret   string // Secret is the HMAC key and helps provide integrity protection for cookies.
 	Duration string // Validity period for new cookies. Users are granted access for this length of time regardless of changes to user's account in the OIDC provider.
 	Insecure bool   // Only set this if you are using HTTP.
+	SameSite string // SameSite attribute for cookies. Options: "Strict", "Lax", "None". Defaults to "Lax".
 
-	duration time.Duration // Parsed Duration value.
+	duration time.Duration   // Parsed Duration value.
+	sameSite http.SameSite   // Parsed SameSite value.
 }
 
 type AuthorizedConfig struct {
@@ -87,6 +89,7 @@ func CreateConfig() *Config {
 			Name:     "oidc_auth",
 			Path:     "/",
 			Duration: "24h",
+			SameSite: "Lax",
 		},
 	}
 }
@@ -102,6 +105,18 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	}
 	if len(config.Authorized.Emails) == 0 && len(config.Authorized.Domains) == 0 {
 		return nil, errConfigMissingAuthorized
+	}
+
+	// Parse and validate SameSite attribute.
+	switch strings.ToLower(config.Cookie.SameSite) {
+	case "strict":
+		config.Cookie.sameSite = http.SameSiteStrictMode
+	case "lax", "":
+		config.Cookie.sameSite = http.SameSiteLaxMode
+	case "none":
+		config.Cookie.sameSite = http.SameSiteNoneMode
+	default:
+		return nil, fmt.Errorf("invalid cookie.sameSite value %q: must be Strict, Lax, or None", config.Cookie.SameSite)
 	}
 
 	// Logging is only enabled when debug=true.
@@ -237,6 +252,7 @@ func (h *authnRedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		Expires:  expires,
 		Secure:   !h.config.Cookie.Insecure,
 		HttpOnly: true,
+		SameSite: h.config.Cookie.sameSite,
 	})
 
 	u, _ := url.Parse(h.authorizationEndpoint)
@@ -384,6 +400,7 @@ func (h *oidcCallbackHandler) setCookie(w http.ResponseWriter, email, domain str
 		Expires:  expires.Add(120 * 24 * time.Hour),
 		Secure:   !h.config.Cookie.Insecure,
 		HttpOnly: true,
+		SameSite: h.config.Cookie.sameSite,
 	})
 	return nil
 }
