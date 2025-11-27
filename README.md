@@ -25,6 +25,7 @@ client secret. See the [Google developer docs](https://developers.google.com/ide
 | cookie.secret      |                | X        | Secret is the HMAC key for cookie signing, and helps provide integrity protection for cookies.                                                                                    |
 | cookie.duration    | 24h            |          | Validity period for new cookies. Users are granted access for this length of time regardless of changes to user's account in the OIDC provider. Uses the Go time.Duration format. |
 | cookie.insecure    | false          |          | Set to true to omit the `Secure` attribute from cookies.                                                                                                                          |
+| cookie.sameSite    | Lax            |          | SameSite attribute for cookies. Options: `Strict`, `Lax`, `None`. `Lax` provides CSRF protection while allowing cookies on top-level navigation.                                  |
 | authorized.emails  |                | X        | List of allowed email addresses.                                                                                                                                                  |
 | authorized.domains |                | X        | List of allowed domains.                                                                                                                                                          |
 | debug              | false          |          | Enable debug logging to stdout.

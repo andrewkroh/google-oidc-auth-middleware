@@ -87,6 +87,9 @@ func TestUnauthorizedAccess(t *testing.T) {
 	if !csrfCookie.HttpOnly {
 		t.Error("CSRF cookie HttpOnly got false, want true")
 	}
+	if got, want := csrfCookie.SameSite, http.SameSiteLaxMode; got != want {
+		t.Errorf("CSRF cookie SameSite got %v, want %v", got, want)
+	}
 }
 
 // TestUnauthorizedAccessWithPrompt verifies that unauthorized requests are redirected
