@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	protectedURL       = "http://localhost/protected"
-	protectedPromptURL = "http://localhost/protected-prompt"
+	protectedURL              = "http://localhost/protected"
+	protectedPromptURL        = "http://localhost/protected-prompt"
+	protectedMultisubdomainURL = "http://localhost/protected-multisubdomain"
 )
 
 var cookieSecret = getEnvOrDefault("COOKIE_SECRET", "test-hmac-secret")
@@ -255,6 +256,182 @@ func TestExpiredCookieWithLoginHint(t *testing.T) {
 		if !strings.Contains(location, want) {
 			t.Errorf("Location header got %q, want to contain %q", location, want)
 		}
+	}
+}
+
+// TestCookieDomainAttribute tests that cookies have the Domain attribute set
+// when cookie.domain is configured in the middleware. This is important for
+// multi-subdomain authentication scenarios.
+func TestCookieDomainAttribute(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Don't follow redirects - we want to examine them.
+			return http.ErrUseLastResponse
+		},
+	}
+
+	// Test the multi-subdomain service which has cookie.domain configured
+	resp, err := client.Get(protectedMultisubdomainURL)
+	if err != nil {
+		t.Fatalf("GET %q failed: %v", protectedMultisubdomainURL, err)
+	}
+	defer resp.Body.Close()
+
+	// Should get a redirect to Google OAuth.
+	if resp.StatusCode != http.StatusTemporaryRedirect {
+		t.Errorf("StatusCode got %d, want %d", resp.StatusCode, http.StatusTemporaryRedirect)
+	}
+
+	// Verify CSRF cookie Domain attribute.
+	var csrfCookie *http.Cookie
+	for _, cookie := range resp.Cookies() {
+		if strings.HasSuffix(cookie.Name, "_csrf") {
+			csrfCookie = cookie
+			break
+		}
+	}
+	if csrfCookie == nil {
+		t.Fatal("CSRF cookie not found")
+	}
+
+	// The multi-subdomain service should have cookie.domain set via COOKIE_DOMAIN env var.
+	// Note: Go's http.Cookie strips the leading dot when sending Set-Cookie headers,
+	// so we expect "localhost" even though the config has ".localhost".
+	configuredDomain := getEnvOrDefault("COOKIE_DOMAIN", ".localhost")
+	expectedDomain := strings.TrimPrefix(configuredDomain, ".")
+	if csrfCookie.Domain != expectedDomain {
+		t.Errorf("CSRF cookie Domain got %q, want %q (configured as %q, leading dot stripped by Go)", csrfCookie.Domain, expectedDomain, configuredDomain)
+	}
+
+	// Verify other cookie attributes are still correct.
+	if got, want := csrfCookie.Path, "/protected-multisubdomain/oidc/callback"; got != want {
+		t.Errorf("CSRF cookie path got %q, want %q", got, want)
+	}
+	if !csrfCookie.HttpOnly {
+		t.Error("CSRF cookie HttpOnly got false, want true")
+	}
+	if got, want := csrfCookie.SameSite, http.SameSiteLaxMode; got != want {
+		t.Errorf("CSRF cookie SameSite got %v, want %v", got, want)
+	}
+}
+
+// TestRedirectURIWithRedirectHost tests that the redirect_uri parameter uses
+// the configured redirectHost when oidc.redirectHost is set. This verifies
+// the multi-subdomain feature where all auth flows use a central callback URL.
+func TestRedirectURIWithRedirectHost(t *testing.T) {
+	t.Parallel()
+
+	// This test verifies the redirect_uri in the OAuth authorization URL.
+	// The multi-subdomain service should use oidc.redirectHost for the redirect_uri.
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	// Test the multi-subdomain service which has oidc.redirectHost configured
+	resp, err := client.Get(protectedMultisubdomainURL)
+	if err != nil {
+		t.Fatalf("GET %q failed: %v", protectedMultisubdomainURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusTemporaryRedirect {
+		t.Errorf("StatusCode got %d, want %d", resp.StatusCode, http.StatusTemporaryRedirect)
+	}
+
+	location := resp.Header.Get("Location")
+	redirectURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("Failed to parse redirect URL %q: %v", location, err)
+	}
+
+	redirectURI := redirectURL.Query().Get("redirect_uri")
+	if redirectURI == "" {
+		t.Fatal("redirect_uri parameter not found in OAuth URL")
+	}
+
+	// Parse the redirect_uri to check its host.
+	parsedRedirectURI, err := url.Parse(redirectURI)
+	if err != nil {
+		t.Fatalf("Failed to parse redirect_uri %q: %v", redirectURI, err)
+	}
+
+	// The multi-subdomain service should use the REDIRECT_HOST env var
+	expectedHost := getEnvOrDefault("REDIRECT_HOST", "auth.localhost")
+	if parsedRedirectURI.Host != expectedHost {
+		t.Errorf("redirect_uri host got %q, want %q (REDIRECT_HOST env var)", parsedRedirectURI.Host, expectedHost)
+	}
+
+	// Verify the path is still correct.
+	expectedPath := "/protected-multisubdomain/oidc/callback"
+	if parsedRedirectURI.Path != expectedPath {
+		t.Errorf("redirect_uri path got %q, want %q", parsedRedirectURI.Path, expectedPath)
+	}
+
+	t.Logf("redirect_uri: %s", redirectURI)
+}
+
+// TestMultisubdomainBackwardCompatibility verifies that the standard protected
+// service (without multi-subdomain config) still works as before.
+func TestMultisubdomainBackwardCompatibility(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	// Test the standard protected service (no redirectHost or cookie.domain)
+	resp, err := client.Get(protectedURL)
+	if err != nil {
+		t.Fatalf("GET %q failed: %v", protectedURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusTemporaryRedirect {
+		t.Errorf("StatusCode got %d, want %d", resp.StatusCode, http.StatusTemporaryRedirect)
+	}
+
+	location := resp.Header.Get("Location")
+	redirectURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("Failed to parse redirect URL %q: %v", location, err)
+	}
+
+	redirectURI := redirectURL.Query().Get("redirect_uri")
+	if redirectURI == "" {
+		t.Fatal("redirect_uri parameter not found in OAuth URL")
+	}
+
+	parsedRedirectURI, err := url.Parse(redirectURI)
+	if err != nil {
+		t.Fatalf("Failed to parse redirect_uri %q: %v", redirectURI, err)
+	}
+
+	// Without redirectHost configured, should use the request's host
+	if parsedRedirectURI.Host != "localhost" {
+		t.Errorf("redirect_uri host got %q, want %q (no redirectHost)", parsedRedirectURI.Host, "localhost")
+	}
+
+	// Check CSRF cookie has no Domain attribute (backward compatible)
+	var csrfCookie *http.Cookie
+	for _, cookie := range resp.Cookies() {
+		if strings.HasSuffix(cookie.Name, "_csrf") {
+			csrfCookie = cookie
+			break
+		}
+	}
+	if csrfCookie == nil {
+		t.Fatal("CSRF cookie not found")
+	}
+
+	if csrfCookie.Domain != "" {
+		t.Errorf("CSRF cookie Domain got %q, want empty (backward compatible)", csrfCookie.Domain)
 	}
 }
 

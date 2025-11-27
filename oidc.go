@@ -52,9 +52,10 @@ type CookieConfig struct {
 	Duration string // Validity period for new cookies. Users are granted access for this length of time regardless of changes to user's account in the OIDC provider.
 	Insecure bool   // Only set this if you are using HTTP.
 	SameSite string // SameSite attribute for cookies. Options: "Strict", "Lax", "None". Defaults to "Lax".
+	Domain   string // Domain attribute for cookies. Use this to share cookies across subdomains (e.g., ".example.com"). Must start with a dot (which Go strips when sending Set-Cookie headers, but the subdomain-sharing behavior is preserved).
 
-	duration time.Duration   // Parsed Duration value.
-	sameSite http.SameSite   // Parsed SameSite value.
+	duration time.Duration // Parsed Duration value.
+	sameSite http.SameSite // Parsed SameSite value.
 }
 
 type AuthorizedConfig struct {
@@ -71,6 +72,13 @@ type OIDCConfig struct {
 
 	// The path where the OIDC provider will redirect user after authenticating.
 	CallbackPath string
+
+	// RedirectHost is an optional host override for the OIDC redirect URI. When set,
+	// all OIDC flows will use this host for the redirect URI instead of the current
+	// request's host. This enables using a single, central redirect URI across multiple
+	// subdomains (e.g., "auth.example.com"). Requires cookie.domain to be set for
+	// cookie sharing across subdomains.
+	RedirectHost string
 
 	// Prompt is an optional, space-delimited, case-sensitive list of prompts to
 	// present the user. If you don't specify this parameter, the user will be
@@ -119,6 +127,23 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		return nil, fmt.Errorf("invalid cookie.sameSite value %q: must be Strict, Lax, or None", config.Cookie.SameSite)
 	}
 
+	// Validate cookie.domain if set.
+	// Note: We require a leading dot for clarity, even though Go's http.Cookie
+	// strips it when sending Set-Cookie headers. The leading dot makes the intent
+	// explicit that this is for subdomain sharing.
+	if config.Cookie.Domain != "" {
+		if !strings.HasPrefix(config.Cookie.Domain, ".") {
+			return nil, fmt.Errorf("invalid cookie.domain value %q: must start with a dot (e.g., '.example.com')", config.Cookie.Domain)
+		}
+	}
+
+	// Require cookie.domain when redirectHost is set (cookies must be shared across subdomains).
+	if config.OIDC.RedirectHost != "" && config.Cookie.Domain == "" {
+		return nil, fmt.Errorf("oidc.redirectHost is set to %q but cookie.domain "+
+			"is not configured: cookie.domain is required when using a central "+
+			"redirect URI to share cookies across subdomains", config.OIDC.RedirectHost)
+	}
+
 	// Logging is only enabled when debug=true.
 	logDestination := io.Discard
 	if config.Debug {
@@ -139,6 +164,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		debug:        debug,
 		cookieName:   config.Cookie.Name,
 		cookiePath:   config.Cookie.Path,
+		cookieDomain: config.Cookie.Domain,
 		cookieSigner: cookieSigner,
 		allowEmails:  toMap(config.Authorized.Emails),
 		allowDomains: toMap(config.Authorized.Domains),
@@ -173,6 +199,7 @@ type cookieAuthzHandler struct {
 	debug        *log.Logger         // Debug logger (enabled via config).
 	cookieName   string              // Name of cookie to read.
 	cookiePath   string              // Path of the cookie (for deletion purposes).
+	cookieDomain string              // Domain of the cookie (for deletion purposes).
 	cookieSigner *cookieSigner       // Encoder / decoder for signed cookies.
 	allowEmails  map[string]struct{} // Allowed email addresses.
 	allowDomains map[string]struct{} // Allowed domains.
@@ -208,7 +235,7 @@ func (h *cookieAuthzHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 AUTH:
 	// Clear the cookie if it exists.
-	deleteCookie(w, r, h.cookieName, h.cookiePath)
+	deleteCookie(w, r, h.cookieName, h.cookiePath, h.cookieDomain)
 
 	// Authenticate.
 	h.authN.ServeHTTP(w, r)
@@ -245,7 +272,7 @@ func (h *authnRedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
+	cookie := &http.Cookie{
 		Name:     csrfCookieName(h.config.Cookie.Name),
 		Value:    csrfCookieValue,
 		Path:     h.config.OIDC.CallbackPath,
@@ -253,14 +280,18 @@ func (h *authnRedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		Secure:   !h.config.Cookie.Insecure,
 		HttpOnly: true,
 		SameSite: h.config.Cookie.sameSite,
-	})
+	}
+	if h.config.Cookie.Domain != "" {
+		cookie.Domain = h.config.Cookie.Domain
+	}
+	http.SetCookie(w, cookie)
 
 	u, _ := url.Parse(h.authorizationEndpoint)
 	q := u.Query()
 	q.Set("client_id", h.config.OIDC.ClientID)
 	q.Set("response_type", "code")
 	q.Set("scope", "openid email")
-	q.Set("redirect_uri", redirectURI(r, h.config.OIDC.CallbackPath))
+	q.Set("redirect_uri", redirectURI(r, h.config.OIDC.CallbackPath, h.config.OIDC.RedirectHost))
 	q.Set("nonce", n)
 	q.Set("state", n)
 	if loginHint, ok := r.Context().Value("login_hint").(string); ok {
@@ -308,21 +339,21 @@ func (h *oidcCallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	csrfCookie, err := newCSRFCookieFromRequest(r, h.signer, cookieName)
 	if err != nil {
 		h.debug.Printf("Invalid CSRF cookie in OIDC callback for addr=%s: %v", r.RemoteAddr, err)
-		deleteCookie(w, r, cookieName, h.config.OIDC.CallbackPath)
+		deleteCookie(w, r, cookieName, h.config.OIDC.CallbackPath, h.config.Cookie.Domain)
 		http.Error(w, "Not authorized", http.StatusUnauthorized)
 		return
 	}
 
 	if csrfCookie.Nonce != state {
 		h.debug.Printf("OIDC callback state doesn't match CSRF cookie for addr=%s", r.RemoteAddr)
-		deleteCookie(w, r, cookieName, h.config.OIDC.CallbackPath)
+		deleteCookie(w, r, cookieName, h.config.OIDC.CallbackPath, h.config.Cookie.Domain)
 		http.Error(w, "Not authorized", http.StatusUnauthorized)
 		return
 	}
 
-	deleteCookie(w, r, cookieName, h.config.OIDC.CallbackPath)
+	deleteCookie(w, r, cookieName, h.config.OIDC.CallbackPath, h.config.Cookie.Domain)
 
-	token, err := h.exchangeToken(code, redirectURI(r, h.config.OIDC.CallbackPath))
+	token, err := h.exchangeToken(code, redirectURI(r, h.config.OIDC.CallbackPath, h.config.OIDC.RedirectHost))
 	if err != nil {
 		h.debug.Println("Failed exchanging auth code for token.", err)
 		http.Error(w, "Not authorized", http.StatusUnauthorized)
@@ -391,7 +422,7 @@ func (h *oidcCallbackHandler) setCookie(w http.ResponseWriter, email, domain str
 		return err
 	}
 
-	http.SetCookie(w, &http.Cookie{
+	cookie := &http.Cookie{
 		Name:  h.config.Cookie.Name,
 		Value: ac,
 		Path:  h.config.Cookie.Path,
@@ -401,7 +432,11 @@ func (h *oidcCallbackHandler) setCookie(w http.ResponseWriter, email, domain str
 		Secure:   !h.config.Cookie.Insecure,
 		HttpOnly: true,
 		SameSite: h.config.Cookie.sameSite,
-	})
+	}
+	if h.config.Cookie.Domain != "" {
+		cookie.Domain = h.config.Cookie.Domain
+	}
+	http.SetCookie(w, cookie)
 	return nil
 }
 
@@ -511,16 +546,20 @@ func (c *CSRFCookie) Base64() string {
 // ############################################
 
 // deleteCookie "deletes" a cookie if that cookie exists in r.
-func deleteCookie(w http.ResponseWriter, r *http.Request, cookieName, cookiePath string) {
+func deleteCookie(w http.ResponseWriter, r *http.Request, cookieName, cookiePath, cookieDomain string) {
 	if _, err := r.Cookie(cookieName); err != nil {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
+	cookie := &http.Cookie{
 		Name:    cookieName,
 		Path:    cookiePath,
 		Expires: time.Now().Add(-24 * time.Hour),
-	})
+	}
+	if cookieDomain != "" {
+		cookie.Domain = cookieDomain
+	}
+	http.SetCookie(w, cookie)
 }
 
 // toMap converts a list to a set. If the list is empty, then nil is returned.
@@ -598,11 +637,17 @@ func parseJWT(idToken string) (email, domain string, err error) {
 }
 
 // redirectURI builds a URL based on the request scheme/host plus the given
-// path. This is used to form the OIDC redirect URI.
-func redirectURI(r *http.Request, callbackPath string) string {
+// path. This is used to form the OIDC redirect URI. If redirectHost is provided,
+// it overrides the host from the request to enable a central redirect URI across
+// multiple subdomains.
+func redirectURI(r *http.Request, callbackPath, redirectHost string) string {
+	host := r.Header.Get("X-Forwarded-Host")
+	if redirectHost != "" {
+		host = redirectHost
+	}
 	u := url.URL{
 		Scheme: r.Header.Get("X-Forwarded-Proto"),
-		Host:   r.Header.Get("X-Forwarded-Host"),
+		Host:   host,
 		Path:   callbackPath,
 	}
 	return u.String()
