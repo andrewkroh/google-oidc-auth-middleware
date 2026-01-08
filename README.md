@@ -144,11 +144,12 @@ http:
     # Router for the central callback host
     auth-callback:
       rule: Host(`auth.example.com`) && Path(`/oidc/callback`)
-      service: service-foo  # Can point to any service
+      service: noop@internal
       entryPoints:
         - web
       middlewares:
         - oidc-auth
+      #tls: ...
 
     # Routers for protected subdomains
     app1:
@@ -203,4 +204,3 @@ Instead of having to register:
 
 - All protected sites must be under the same eTLD+1 (e.g., `*.example.com`)
 - Sharing cookies across different apex domains (e.g., `example.com` vs `example.org`) is not supported
-- You need a Traefik router for the central callback host with the OIDC auth middleware applied

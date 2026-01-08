@@ -255,6 +255,15 @@ type authnRedirectHandler struct {
 }
 
 func (h *authnRedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// For XHR/fetch requests (non-navigation), return 401 instead of redirecting.
+	// Redirecting XHR requests to OAuth doesn't work (cross-origin redirect blocked)
+	// and would overwrite CSRF cookies from legitimate navigation-based auth flows.
+	// The Sec-Fetch-Mode header is set by modern browsers on all requests.
+	if r.Header.Get("Sec-Fetch-Mode") != "" && r.Header.Get("Sec-Fetch-Mode") != "navigate" {
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
+
 	n, err := nonce()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

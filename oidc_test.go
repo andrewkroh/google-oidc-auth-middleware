@@ -217,4 +217,96 @@ func TestConfigValidation(t *testing.T) {
 	}
 }
 
+func TestAuthnRedirectHandler_XHRRequests(t *testing.T) {
+	config := &Config{
+		OIDC: OIDCConfig{
+			ClientID:     "test-client-id",
+			CallbackPath: "/oidc/callback",
+		},
+		Cookie: CookieConfig{
+			Name:     "oidc_auth",
+			Path:     "/",
+			Secret:   "test-secret",
+			Duration: "24h",
+			sameSite: http.SameSiteLaxMode,
+		},
+	}
 
+	h := &authnRedirectHandler{
+		debug:                 log.New(io.Discard, "", 0),
+		config:                config,
+		signer:                newCookieSigner(config.Cookie.Secret),
+		authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+	}
+
+	tests := []struct {
+		name           string
+		secFetchMode   string
+		wantStatus     int
+		wantRedirect   bool
+	}{
+		{
+			name:         "navigate mode triggers redirect",
+			secFetchMode: "navigate",
+			wantStatus:   http.StatusTemporaryRedirect,
+			wantRedirect: true,
+		},
+		{
+			name:         "cors mode returns 401",
+			secFetchMode: "cors",
+			wantStatus:   http.StatusUnauthorized,
+			wantRedirect: false,
+		},
+		{
+			name:         "same-origin mode returns 401",
+			secFetchMode: "same-origin",
+			wantStatus:   http.StatusUnauthorized,
+			wantRedirect: false,
+		},
+		{
+			name:         "no-cors mode returns 401",
+			secFetchMode: "no-cors",
+			wantStatus:   http.StatusUnauthorized,
+			wantRedirect: false,
+		},
+		{
+			name:         "empty header triggers redirect (legacy browser)",
+			secFetchMode: "",
+			wantStatus:   http.StatusTemporaryRedirect,
+			wantRedirect: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "/api/resource", nil)
+			r.Header.Set("X-Forwarded-Proto", "https")
+			r.Header.Set("X-Forwarded-Host", "app.example.com")
+			if tt.secFetchMode != "" {
+				r.Header.Set("Sec-Fetch-Mode", tt.secFetchMode)
+			}
+
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d", w.Code, tt.wantStatus)
+			}
+
+			hasLocation := w.Header().Get("Location") != ""
+			if hasLocation != tt.wantRedirect {
+				t.Errorf("got redirect=%v, want redirect=%v", hasLocation, tt.wantRedirect)
+			}
+
+			// For non-navigate requests, verify no CSRF cookie is set
+			if !tt.wantRedirect {
+				cookies := w.Result().Cookies()
+				for _, c := range cookies {
+					if c.Name == "oidc_auth_csrf" {
+						t.Error("CSRF cookie should not be set for XHR requests")
+					}
+				}
+			}
+		})
+	}
+}
