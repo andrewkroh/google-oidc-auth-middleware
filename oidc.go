@@ -475,20 +475,31 @@ func newAuthCookie(signer *cookieSigner, expires time.Time, email, domain string
 }
 
 func newAuthCookieFromRequest(r *http.Request, signer *cookieSigner, cookieName string) (c *AuthCookie, loginHint string, err error) {
-	cookie, err := r.Cookie(cookieName)
-	if err != nil {
-		return nil, "", fmt.Errorf("cookie %s not found in request: %w", cookieName, err)
+	// Check all cookies with the given name, not just the first one.
+	// Browsers may send multiple cookies with the same name if they were set
+	// with different domains (e.g., one without domain and one with a parent domain).
+	// We want to find the first valid (non-expired) cookie.
+	var lastEmail string
+	for _, cookie := range r.Cookies() {
+		if cookie.Name != cookieName {
+			continue
+		}
+
+		var ac *AuthCookie
+		if err := signer.Decode(cookie.Value, &ac); err != nil {
+			continue // Skip invalid cookies
+		}
+
+		lastEmail = ac.Email // Remember for login_hint
+		if !ac.Expired() {
+			return ac, "", nil
+		}
 	}
 
-	if err = signer.Decode(cookie.Value, &c); err != nil {
-		return nil, "", err
+	if lastEmail != "" {
+		return nil, lastEmail, fmt.Errorf("cookie for user %q expired: %w", lastEmail, errExpiredCookie)
 	}
-
-	if c.Expired() {
-		return nil, c.Email, fmt.Errorf("cookie for user %q expired: %w", c.Email, errExpiredCookie)
-	}
-
-	return c, "", nil
+	return nil, "", fmt.Errorf("cookie %s not found in request: %w", cookieName, http.ErrNoCookie)
 }
 
 func (c *AuthCookie) Expired() bool {
@@ -555,20 +566,31 @@ func (c *CSRFCookie) Base64() string {
 // ############################################
 
 // deleteCookie "deletes" a cookie if that cookie exists in r.
+// When cookieDomain is set, it deletes cookies both with and without the domain
+// attribute to clean up any legacy cookies that may have been set differently.
 func deleteCookie(w http.ResponseWriter, r *http.Request, cookieName, cookiePath, cookieDomain string) {
 	if _, err := r.Cookie(cookieName); err != nil {
 		return
 	}
 
-	cookie := &http.Cookie{
+	expires := time.Now().Add(-24 * time.Hour)
+
+	// Delete cookie without domain (for host-only cookies)
+	http.SetCookie(w, &http.Cookie{
 		Name:    cookieName,
 		Path:    cookiePath,
-		Expires: time.Now().Add(-24 * time.Hour),
-	}
+		Expires: expires,
+	})
+
+	// Also delete cookie with domain if configured (for subdomain cookies)
 	if cookieDomain != "" {
-		cookie.Domain = cookieDomain
+		http.SetCookie(w, &http.Cookie{
+			Name:    cookieName,
+			Path:    cookiePath,
+			Domain:  cookieDomain,
+			Expires: expires,
+		})
 	}
-	http.SetCookie(w, cookie)
 }
 
 // toMap converts a list to a set. If the list is empty, then nil is returned.

@@ -61,6 +61,67 @@ func TestCookieAuthzHandler_ServeHTTP(t *testing.T) {
 	})
 }
 
+func TestNewAuthCookieFromRequest_MultipleCookies(t *testing.T) {
+	signer := newCookieSigner("test-secret")
+	cookieName := "oidc_auth"
+
+	t.Run("uses valid cookie when first cookie is expired", func(t *testing.T) {
+		// Create an expired cookie (first in order)
+		expiredValue, _ := newAuthCookie(signer, time.Now().Add(-1*time.Hour), "expired@example.com", "")
+		// Create a valid cookie (second in order)
+		validValue, _ := newAuthCookie(signer, time.Now().Add(1*time.Hour), "valid@example.com", "")
+
+		r := httptest.NewRequest("GET", "/", nil)
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: expiredValue})
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: validValue})
+
+		ac, _, err := newAuthCookieFromRequest(r, signer, cookieName)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if ac.Email != "valid@example.com" {
+			t.Errorf("expected valid@example.com, got %s", ac.Email)
+		}
+	})
+
+	t.Run("uses valid cookie when second cookie is expired", func(t *testing.T) {
+		// Create a valid cookie (first in order)
+		validValue, _ := newAuthCookie(signer, time.Now().Add(1*time.Hour), "valid@example.com", "")
+		// Create an expired cookie (second in order)
+		expiredValue, _ := newAuthCookie(signer, time.Now().Add(-1*time.Hour), "expired@example.com", "")
+
+		r := httptest.NewRequest("GET", "/", nil)
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: validValue})
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: expiredValue})
+
+		ac, _, err := newAuthCookieFromRequest(r, signer, cookieName)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if ac.Email != "valid@example.com" {
+			t.Errorf("expected valid@example.com, got %s", ac.Email)
+		}
+	})
+
+	t.Run("returns login_hint when all cookies are expired", func(t *testing.T) {
+		expiredValue1, _ := newAuthCookie(signer, time.Now().Add(-2*time.Hour), "first@example.com", "")
+		expiredValue2, _ := newAuthCookie(signer, time.Now().Add(-1*time.Hour), "second@example.com", "")
+
+		r := httptest.NewRequest("GET", "/", nil)
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: expiredValue1})
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: expiredValue2})
+
+		_, loginHint, err := newAuthCookieFromRequest(r, signer, cookieName)
+		if err == nil {
+			t.Fatal("expected error for expired cookies")
+		}
+		// Should return the last email seen as login_hint
+		if loginHint != "second@example.com" {
+			t.Errorf("expected login_hint second@example.com, got %s", loginHint)
+		}
+	})
+}
+
 func TestRedirectURI(t *testing.T) {
 	tests := []struct {
 		name         string
