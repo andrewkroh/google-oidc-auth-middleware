@@ -42,6 +42,7 @@ type Config struct {
 	OIDC       OIDCConfig
 	Cookie     CookieConfig
 	Authorized AuthorizedConfig
+	Headers    HeadersConfig
 	Debug      bool // Enable debug logging to stdout.
 }
 
@@ -87,6 +88,11 @@ type OIDCConfig struct {
 	Prompt string
 }
 
+type HeadersConfig struct {
+	JwtPassthrough     bool   // If true, the raw JWT from the OIDC provider will be passed downstream in a header.
+	JwtPassthroughHeaderName string // If set, overrides the default header name "X-Forwarded-ID-Token" for passing the raw JWT downstream.
+}
+
 // CreateConfig creates the default plugin configuration.
 func CreateConfig() *Config {
 	return &Config{
@@ -98,6 +104,9 @@ func CreateConfig() *Config {
 			Path:     "/",
 			Duration: "24h",
 			SameSite: "Lax",
+		},
+		Headers: HeadersConfig{
+			JwtPassthrough: false,
 		},
 	}
 }
@@ -135,6 +144,11 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		if !strings.HasPrefix(config.Cookie.Domain, ".") {
 			return nil, fmt.Errorf("invalid cookie.domain value %q: must start with a dot (e.g., '.example.com')", config.Cookie.Domain)
 		}
+	}
+
+	// Set the default header name to "X-Forwarded-ID-Token" if passthrough is enabled but no header name override is provided.
+	if config.Headers.JwtPassthrough && config.Headers.JwtPassthroughHeaderName == "" {
+		config.Headers.JwtPassthroughHeaderName = "X-Forwarded-ID-Token"
 	}
 
 	// Require cookie.domain when redirectHost is set (cookies must be shared across subdomains).
@@ -380,6 +394,11 @@ func (h *oidcCallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		h.debug.Printf("failed to build signed cookie: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
+	}
+
+	// If enabled, pass the JWT downstream in a header
+	if h.config.Headers.JwtPassthrough {
+		w.Header().Set(h.config.Headers.JwtPassthroughHeaderName, token.IDToken)
 	}
 
 	http.Redirect(w, r, csrfCookie.RedirectURL, http.StatusFound)

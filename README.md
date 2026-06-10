@@ -14,23 +14,25 @@ client secret. See the [Google developer docs](https://developers.google.com/ide
 
 ## Configuration
 
-| Option             | Default        | Required | Description                                                                                                                                                                       |
-|--------------------|----------------|----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| oidc.clientID      |                | X        | OAuth client ID                                                                                                                                                                   |
-| oidc.clientSecret  |                | X        | OAuth client secret                                                                                                                                                               |
-| oidc.callbackPath  | /oidc/callback |          | The path where the OIDC provider will redirect the user after authenticating.                                                                                                     |
-| oidc.redirectHost  |                |          | Optional host override for the OIDC redirect URI. Use this to configure a single, central redirect URI for multiple subdomains (e.g., `auth.example.com`). Requires `cookie.domain` to be set for cookie sharing. |
-| oidc.prompt        |                |          | A space-delimited, case-sensitive list of prompts to present the user. Possible values are: `none`, `consent`, `select_account`. See [Google's docs](https://developers.google.com/identity/protocols/oauth2/web-server#httprest_1) for more info. |
-| cookie.name        | oidc_auth      |          | Name of the cookie. It can be customized to avoid collisions when running multiple instances of the middleware.                                                                   |
-| cookie.path        | /              |          | You can use this to limit the scope of the cookie to a specific path. Defaults to '/'.                                                                                            |
-| cookie.secret      |                | X        | Secret is the HMAC key for cookie signing, and helps provide integrity protection for cookies.                                                                                    |
-| cookie.duration    | 24h            |          | Validity period for new cookies. Users are granted access for this length of time regardless of changes to user's account in the OIDC provider. Uses the Go time.Duration format. |
-| cookie.insecure    | false          |          | Set to true to omit the `Secure` attribute from cookies.                                                                                                                          |
-| cookie.sameSite    | Lax            |          | SameSite attribute for cookies. Options: `Strict`, `Lax`, `None`. `Lax` provides CSRF protection while allowing cookies on top-level navigation.                                  |
-| cookie.domain      |                |          | Domain attribute for cookies. Use this to share cookies across subdomains (e.g., `.example.com`). Must start with a dot. Required when using `oidc.redirectHost`.                  |
-| authorized.emails  |                | X        | List of allowed email addresses.                                                                                                                                                  |
-| authorized.domains |                | X        | List of allowed domains.                                                                                                                                                          |
-| debug              | false          |          | Enable debug logging to stdout.
+| Option                            | Default               | Required | Description                                                                                                                                                                       |
+|-----------------------------------|-----------------------|----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| oidc.clientID                     |                       | X        | OAuth client ID                                                                                                                                                                   |
+| oidc.clientSecret                 |                       | X        | OAuth client secret                                                                                                                                                               |
+| oidc.callbackPath                 | /oidc/callback        |          | The path where the OIDC provider will redirect the user after authenticating.                                                                                                     |
+| oidc.redirectHost                 |                       |          | Optional host override for the OIDC redirect URI. Use this to configure a single, central redirect URI for multiple subdomains (e.g., `auth.example.com`). Requires `cookie.domain` to be set for cookie sharing. |
+| oidc.prompt                       |                       |          | A space-delimited, case-sensitive list of prompts to present the user. Possible values are: `none`, `consent`, `select_account`. See [Google's docs](https://developers.google.com/identity/protocols/oauth2/web-server#httprest_1) for more info. |
+| cookie.name                       | oidc_auth             |          | Name of the cookie. It can be customized to avoid collisions when running multiple instances of the middleware.                                                                   |
+| cookie.path                       | /                     |          | You can use this to limit the scope of the cookie to a specific path. Defaults to '/'.                                                                                            |
+| cookie.secret                     |                       | X        | Secret is the HMAC key for cookie signing, and helps provide integrity protection for cookies.                                                                                    |
+| cookie.duration                   | 24h                   |          | Validity period for new cookies. Users are granted access for this length of time regardless of changes to user's account in the OIDC provider. Uses the Go time.Duration format. |
+| cookie.insecure                   | false                 |          | Set to true to omit the `Secure` attribute from cookies.                                                                                                                          |
+| cookie.sameSite                   | Lax                   |          | SameSite attribute for cookies. Options: `Strict`, `Lax`, `None`. `Lax` provides CSRF protection while allowing cookies on top-level navigation.                                  |
+| cookie.domain                     |                       |          | Domain attribute for cookies. Use this to share cookies across subdomains (e.g., `.example.com`). Must start with a dot. Required when using `oidc.redirectHost`.                 |
+| authorized.emails                 |                       | X        | List of allowed email addresses.                                                                                                                                                  |
+| authorized.domains                |                       | X        | List of allowed domains.                                                                                                                                                          |
+| headers.jwtPassthrough            | false                 |          | If true, pass the JWT from Google to the downstream service.                                                                                                                      |
+| headers.jwtPassthroughHeaderName  | X-Forwarded-ID-Token  |          | Header name to use for passing the JWT downstream.                                                                                                                                |
+| debug                             | false                 |          | Enable debug logging to stdout.
 
 ## Headers
 
@@ -59,6 +61,14 @@ The resulting access log will contain a `request_X-Forwarded-User` field.
 
 See [Limiting the Fields/Including Headers](https://doc.traefik.io/traefik/observability/access-logs/#limiting-the-fieldsincluding-headers) for more details.
 
+*X-Forwarded-ID-Token*
+
+Disabled by default. If `headers.jwtPassthrough` is set to `true`, the JWT from the OIDC provider will
+be passed through to the downstream client. This can be useful if, for example, the application wants
+to parse JWTs to extract profile data from the claims, such as name or user profile image.
+
+While this is a standard header name to use for this purpose, you can override the default name of the
+JWT passthrough header by also setting `headers.jwtPassthroughHeaderName`.
 
 ## Example config
 
@@ -90,6 +100,8 @@ http:
             clientSecret: fake-secret
           cookie:
             secret: mySecretKey
+          headers: # Pass the JWT to the downstream services
+            jwtPassthrough: true
           authorized:
             emails:
               - name@gmail.com

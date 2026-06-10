@@ -124,12 +124,12 @@ func TestNewAuthCookieFromRequest_MultipleCookies(t *testing.T) {
 
 func TestRedirectURI(t *testing.T) {
 	tests := []struct {
-		name         string
-		callbackPath string
-		redirectHost string
+		name           string
+		callbackPath   string
+		redirectHost   string
 		forwardedProto string
 		forwardedHost  string
-		want         string
+		want           string
 	}{
 		{
 			name:           "default behavior without redirect host",
@@ -260,6 +260,49 @@ func TestConfigValidation(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "valid config with JWT passthrough enabled and default header",
+			config: &Config{
+				OIDC: OIDCConfig{
+					RedirectHost: "auth.example.com",
+				},
+				Cookie: CookieConfig{
+					Secret:   "test-secret",
+					Duration: "24h",
+					SameSite: "Lax",
+					Domain:   ".example.com",
+				},
+				Authorized: AuthorizedConfig{
+					Emails: []string{"user@example.com"},
+				},
+				Headers: HeadersConfig{
+					JwtPassthrough: true,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid config with JWT passthrough enabled and header name override",
+			config: &Config{
+				OIDC: OIDCConfig{
+					RedirectHost: "auth.example.com",
+				},
+				Cookie: CookieConfig{
+					Secret:   "test-secret",
+					Duration: "24h",
+					SameSite: "Lax",
+					Domain:   ".example.com",
+				},
+				Authorized: AuthorizedConfig{
+					Emails: []string{"user@example.com"},
+				},
+				Headers: HeadersConfig{
+					JwtPassthrough:           true,
+					JwtPassthroughHeaderName: "X-Test-Token",
+				},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -301,10 +344,10 @@ func TestAuthnRedirectHandler_XHRRequests(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		secFetchMode   string
-		wantStatus     int
-		wantRedirect   bool
+		name         string
+		secFetchMode string
+		wantStatus   int
+		wantRedirect bool
 	}{
 		{
 			name:         "navigate mode triggers redirect",
