@@ -2,6 +2,7 @@ package google_oidc_auth_middleware
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -395,6 +396,93 @@ func TestNewAuthCookieFromRequest_MultipleCookies(t *testing.T) {
 		// Should return the last email seen as login_hint
 		if loginHint != "second@example.com" {
 			t.Errorf("expected login_hint second@example.com, got %s", loginHint)
+		}
+	})
+}
+
+func TestNewCSRFCookieFromRequest_MultipleCookies(t *testing.T) {
+	signer := newCookieSigner("test-secret")
+	cookieName := csrfCookieName("oidc_auth")
+
+	newValue := func(t *testing.T, expires time.Time, nonce string) string {
+		t.Helper()
+		v, err := newCSRFCookie(signer, expires, nonce, "https://app.example.com/resource")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+
+	t.Run("uses valid cookie when first cookie is invalid", func(t *testing.T) {
+		validValue := newValue(t, time.Now().Add(1*time.Hour), "valid-nonce")
+
+		r := httptest.NewRequest("GET", "/", nil)
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: "garbage-not-signed"})
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: validValue})
+
+		c, err := newCSRFCookieFromRequest(r, signer, cookieName)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if c.Nonce != "valid-nonce" {
+			t.Errorf("expected valid-nonce, got %s", c.Nonce)
+		}
+	})
+
+	t.Run("uses valid cookie when first cookie is expired", func(t *testing.T) {
+		expiredValue := newValue(t, time.Now().Add(-1*time.Hour), "expired-nonce")
+		validValue := newValue(t, time.Now().Add(1*time.Hour), "valid-nonce")
+
+		r := httptest.NewRequest("GET", "/", nil)
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: expiredValue})
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: validValue})
+
+		c, err := newCSRFCookieFromRequest(r, signer, cookieName)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if c.Nonce != "valid-nonce" {
+			t.Errorf("expected valid-nonce, got %s", c.Nonce)
+		}
+	})
+
+	t.Run("uses valid cookie when second cookie is expired", func(t *testing.T) {
+		validValue := newValue(t, time.Now().Add(1*time.Hour), "valid-nonce")
+		expiredValue := newValue(t, time.Now().Add(-1*time.Hour), "expired-nonce")
+
+		r := httptest.NewRequest("GET", "/", nil)
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: validValue})
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: expiredValue})
+
+		c, err := newCSRFCookieFromRequest(r, signer, cookieName)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if c.Nonce != "valid-nonce" {
+			t.Errorf("expected valid-nonce, got %s", c.Nonce)
+		}
+	})
+
+	t.Run("returns expired error when all cookies are expired", func(t *testing.T) {
+		expiredValue1 := newValue(t, time.Now().Add(-2*time.Hour), "first-nonce")
+		expiredValue2 := newValue(t, time.Now().Add(-1*time.Hour), "second-nonce")
+
+		r := httptest.NewRequest("GET", "/", nil)
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: expiredValue1})
+		r.AddCookie(&http.Cookie{Name: cookieName, Value: expiredValue2})
+
+		_, err := newCSRFCookieFromRequest(r, signer, cookieName)
+		if !errors.Is(err, errExpiredCookie) {
+			t.Errorf("expected errExpiredCookie, got %v", err)
+		}
+	})
+
+	t.Run("returns no cookie error when cookie is absent", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "/", nil)
+
+		_, err := newCSRFCookieFromRequest(r, signer, cookieName)
+		if !errors.Is(err, http.ErrNoCookie) {
+			t.Errorf("expected http.ErrNoCookie, got %v", err)
 		}
 	})
 }
