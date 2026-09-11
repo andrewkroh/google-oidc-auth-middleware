@@ -42,7 +42,7 @@ The middleware will not start if none of them is set.
 
 *X-Forwarded-User*
 
-When the middleware proxies a request it adds an `X-Fowarded-User` header
+When the middleware proxies a request it adds an `X-Forwarded-User` header
 containing the user's email address. This can be used by the downstream service
 to identify the authenticated user.
 
