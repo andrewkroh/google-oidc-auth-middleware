@@ -51,9 +51,12 @@ func (s *cookieSigner) Decode(data string, value any) error {
 
 	m := hmac.New(sha256.New, s.key)
 	m.Write([]byte(v))
-	computedSig := base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+	computedMAC := m.Sum(nil)
 
-	if computedSig != sig {
+	// Compare the raw MAC bytes so that the comparison takes the same
+	// amount of time regardless of how many leading bytes match.
+	providedMAC, err := base64.RawURLEncoding.DecodeString(sig)
+	if err != nil || !hmac.Equal(computedMAC, providedMAC) {
 		return errInvalidCookieSignature
 	}
 
