@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	protectedURL              = "http://localhost/protected"
-	protectedPromptURL        = "http://localhost/protected-prompt"
+	protectedURL               = "http://localhost/protected"
+	protectedPromptURL         = "http://localhost/protected-prompt"
 	protectedMultisubdomainURL = "http://localhost/protected-multisubdomain"
 )
 

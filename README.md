@@ -24,13 +24,19 @@ client secret. See the [Google developer docs](https://developers.google.com/ide
 | cookie.name        | oidc_auth      |          | Name of the cookie. It can be customized to avoid collisions when running multiple instances of the middleware.                                                                   |
 | cookie.path        | /              |          | You can use this to limit the scope of the cookie to a specific path. Defaults to '/'.                                                                                            |
 | cookie.secret      |                | X        | Secret is the HMAC key for cookie signing, and helps provide integrity protection for cookies.                                                                                    |
-| cookie.duration    | 24h            |          | Validity period for new cookies. Users are granted access for this length of time regardless of changes to user's account in the OIDC provider. Uses the Go time.Duration format. |
+| cookie.duration    | 24h            |          | Validity period for new cookies. Users are granted access for this length of time regardless of changes to user's account in the OIDC provider. Removing a user in Google does not invalidate an existing cookie, so keep this short relative to how quickly you need access revoked. Uses the Go time.Duration format. |
 | cookie.insecure    | false          |          | Set to true to omit the `Secure` attribute from cookies.                                                                                                                          |
 | cookie.sameSite    | Lax            |          | SameSite attribute for cookies. Options: `Strict`, `Lax`, `None`. `Lax` provides CSRF protection while allowing cookies on top-level navigation.                                  |
 | cookie.domain      |                |          | Domain attribute for cookies. Use this to share cookies across subdomains (e.g., `.example.com`). Must start with a dot. Required when using `oidc.redirectHost`.                  |
-| authorized.emails  |                | X        | List of allowed email addresses.                                                                                                                                                  |
-| authorized.domains |                | X        | List of allowed domains.                                                                                                                                                          |
+| authorized.emails  |                | *        | List of allowed email addresses.                                                                                                                                                  |
+| authorized.domains |                | *        | List of allowed domains. This is matched against the `hd` claim of the user's Google Workspace account.                                                                          |
+| authorized.allowAllAuthenticatedUsers | false |  * | Grant access to any user who can authenticate with the OAuth client, without checking `authorized.emails` or `authorized.domains`. Cannot be combined with those options. See [Allowing all authenticated users](#allowing-all-authenticated-users). |
 | debug              | false          |          | Enable debug logging to stdout.
+
+\* One of `authorized.emails`, `authorized.domains`, or
+`authorized.allowAllAuthenticatedUsers` must be set. `emails` and `domains` can
+be used together. `allowAllAuthenticatedUsers` cannot be used with either list.
+The middleware will not start if none of them is set.
 
 ## Headers
 
@@ -103,6 +109,53 @@ http:
         - web
       middlewares:
         - oidc-auth
+```
+
+## Allowing all authenticated users
+
+Set `authorized.allowAllAuthenticatedUsers: true` to grant access to **any user
+who can complete the OAuth flow** with your OAuth client. The middleware does
+not check an allowlist in this mode.
+
+Use this option only when the OAuth client itself restricts who can
+authenticate. For example, a Google OAuth client whose user type is set to
+*Internal* lets only members of your Google Workspace organization sign in. If
+the client is *External*, this option gives access to every Google account on
+the internet.
+
+Authentication is not changed by this option. Users still need a valid, signed,
+unexpired cookie, Google must report the email address as verified, and the
+`X-Forwarded-User` header is still set.
+
+When the option is enabled, the middleware always writes a warning to the
+Traefik log at startup, even when `debug` is `false`.
+
+We still recommend that you set `authorized.domains` instead of this option
+when you can, as defense in depth. You can change the client's audience from
+*Internal* to *External* with one setting in the Google Cloud console, and that
+change leaves no trace in your Traefik configuration. A domain allowlist
+continues to protect you if that happens.
+
+If your Workspace organization has secondary domains, note that Google sets a
+different `hd` claim for each domain. You must list each domain in
+`authorized.domains`.
+
+```yaml
+# dynamic.yml
+
+http:
+  middlewares:
+    oidc-auth:
+      plugin:
+        google-oidc-auth-middleware:
+          oidc:
+            # This OAuth client must be restricted to an internal audience.
+            clientID: example.apps.googleusercontent.com
+            clientSecret: fake-secret
+          cookie:
+            secret: mySecretKey
+          authorized:
+            allowAllAuthenticatedUsers: true
 ```
 
 ## Multi-Subdomain Configuration

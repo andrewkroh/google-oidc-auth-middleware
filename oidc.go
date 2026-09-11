@@ -32,7 +32,8 @@ var (
 	errExpiredCookie             = errors.New("cookie is expired")
 	errInvalidCookieSignature    = errors.New("invalid cookie signature")
 	errConfigMissingCookieSecret = errors.New("cookie.secret must be configured")
-	errConfigMissingAuthorized   = errors.New("authorized.emails and/or authorized.domains must be configured")
+	errConfigMissingAuthorized   = errors.New("authorized.emails, authorized.domains, or authorized.allowAllAuthenticatedUsers must be configured")
+	errConfigConflictAuthorized  = errors.New("authorized.allowAllAuthenticatedUsers is mutually exclusive with authorized.emails and authorized.domains")
 	errEmailNotVerified          = errors.New("email address is not verified by OIDC provider")
 	errEmailClaimMissing         = errors.New("email address claim missing from OIDC id_token")
 )
@@ -61,6 +62,13 @@ type CookieConfig struct {
 type AuthorizedConfig struct {
 	Emails  []string // List of allowed email addresses.
 	Domains []string // List of allowed domains.
+
+	// AllowAllAuthenticatedUsers grants access to any user who successfully
+	// authenticates with the OIDC provider, without checking Emails or Domains.
+	// Only use this when the OAuth client itself restricts who can authenticate
+	// (e.g. a Google OAuth client limited to an internal audience). Mutually
+	// exclusive with Emails and Domains.
+	AllowAllAuthenticatedUsers bool
 }
 
 type OIDCConfig struct {
@@ -111,7 +119,19 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	if config.Cookie.Secret == "" {
 		return nil, errConfigMissingCookieSecret
 	}
-	if len(config.Authorized.Emails) == 0 && len(config.Authorized.Domains) == 0 {
+	hasEmails, hasDomains := len(config.Authorized.Emails) > 0, len(config.Authorized.Domains) > 0
+	switch {
+	case config.Authorized.AllowAllAuthenticatedUsers && (hasEmails || hasDomains):
+		var set []string
+		if hasEmails {
+			set = append(set, "authorized.emails")
+		}
+		if hasDomains {
+			set = append(set, "authorized.domains")
+		}
+		return nil, fmt.Errorf("%w: authorized.allowAllAuthenticatedUsers=true was set together "+
+			"with %s; remove one of them", errConfigConflictAuthorized, strings.Join(set, " and "))
+	case !config.Authorized.AllowAllAuthenticatedUsers && !hasEmails && !hasDomains:
 		return nil, errConfigMissingAuthorized
 	}
 
@@ -151,6 +171,12 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	}
 	debug := log.New(logDestination, "["+name+"] ", 0)
 
+	if config.Authorized.AllowAllAuthenticatedUsers {
+		log.New(os.Stdout, "["+name+"] ", 0).Printf("WARNING: authorized.allowAllAuthenticatedUsers "+
+			"is enabled - any user who can authenticate with OAuth client %s will be granted access",
+			config.OIDC.ClientID)
+	}
+
 	cookieSigner := newCookieSigner(config.Cookie.Secret)
 
 	authnHandler := &authnRedirectHandler{
@@ -168,6 +194,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		cookieSigner: cookieSigner,
 		allowEmails:  toMap(config.Authorized.Emails),
 		allowDomains: toMap(config.Authorized.Domains),
+		allowAll:     config.Authorized.AllowAllAuthenticatedUsers,
 		next:         next,
 		authN:        authnHandler,
 	}
@@ -194,7 +221,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 
 // cookieAuthzHandler checks if requests are authorized by the presence of an
 // HMAC signed cookie containing the user's email address. The email address
-// must be specified in an allowlist.
+// must be specified in an allowlist, unless allowAll is set.
 type cookieAuthzHandler struct {
 	debug        *log.Logger         // Debug logger (enabled via config).
 	cookieName   string              // Name of cookie to read.
@@ -203,6 +230,7 @@ type cookieAuthzHandler struct {
 	cookieSigner *cookieSigner       // Encoder / decoder for signed cookies.
 	allowEmails  map[string]struct{} // Allowed email addresses.
 	allowDomains map[string]struct{} // Allowed domains.
+	allowAll     bool                // Allow any authenticated user, ignoring allowEmails and allowDomains.
 	next         http.Handler        // Handler for authorized requests.
 	authN        http.Handler        // Handler to authenticate the user.
 }
@@ -220,7 +248,7 @@ func (h *cookieAuthzHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		goto AUTH
 	}
 
-	if isAuthorized(ac.Email, ac.Domain, h.allowEmails, h.allowDomains) {
+	if isAuthorized(ac.Email, ac.Domain, h.allowEmails, h.allowDomains, h.allowAll) {
 		h.debug.Printf("Received authorized request from user=%s of domain=%s at addr=%s for path=%s",
 			ac.Email, ac.Domain, r.RemoteAddr, r.URL.Path)
 		r.Header.Set("X-Forwarded-User", ac.Email)
@@ -606,8 +634,18 @@ func toMap[T comparable](items []T) map[T]struct{} {
 }
 
 // isAuthorized returns true if the email address is found in allowedEmails
-// or domain is found in allowedDomains.
-func isAuthorized(email, domain string, allowedEmails, allowedDomains map[string]struct{}) bool {
+// or domain is found in allowedDomains. When allowAllAuthenticated is true,
+// any non-empty email is authorized. An empty email is never authorized.
+func isAuthorized(email, domain string, allowedEmails, allowedDomains map[string]struct{}, allowAllAuthenticated bool) bool {
+	// Checked first so that allowAllAuthenticated means "we have an identity",
+	// not "we have a validly signed cookie".
+	if email == "" {
+		return false
+	}
+	if allowAllAuthenticated {
+		return true
+	}
+
 	if _, foundEmail := allowedEmails[email]; foundEmail {
 		return true
 	}
