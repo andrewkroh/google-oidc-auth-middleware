@@ -21,6 +21,14 @@ jobs:
       - name: Unit Test
         run: go test ./...
 
+      # Traefik runs plugins with the Yaegi interpreter, which supports fewer
+      # language features and stdlib symbols than the Go toolchain. Run the
+      # unit tests under Yaegi to catch code that compiles but cannot be
+      # interpreted. Pin to the Yaegi version bundled in the latest Traefik
+      # release.
+      - name: Unit Test (Yaegi)
+        run: go run github.com/traefik/yaegi/cmd/yaegi@v0.16.1 test .
+
       - name: Integration Test
         run: |
           cp .env.example .env
