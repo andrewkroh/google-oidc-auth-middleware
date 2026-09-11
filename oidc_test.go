@@ -1,6 +1,7 @@
 package google_oidc_auth_middleware
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -234,6 +235,41 @@ func TestCookieAuthzHandler_AllowAllAuthenticatedUsers(t *testing.T) {
 			t.Errorf("X-Forwarded-User = %q, want %q", got, "jane@foo.com")
 		}
 	})
+}
+
+// TestNew_AllowAllAuthenticatedUsers builds the handler through New() to
+// verify that the config option is wired to the authorization decision.
+func TestNew_AllowAllAuthenticatedUsers(t *testing.T) {
+	config := CreateConfig()
+	config.OIDC.ClientID = "test-client-id"
+	config.Cookie.Secret = "test-secret"
+	config.Authorized.AllowAllAuthenticatedUsers = true
+
+	next := &recordingHandler{}
+	h, err := New(context.Background(), next, config, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := newAuthCookie(newCookieSigner(config.Cookie.Secret), time.Now().Add(time.Hour), "stranger@gmail.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("GET", "/resource", nil)
+	r.AddCookie(&http.Cookie{Name: config.Cookie.Name, Value: v})
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if !next.called {
+		t.Fatal("next handler was not called")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusOK)
+	}
+	if got := next.req.Header.Get("X-Forwarded-User"); got != "stranger@gmail.com" {
+		t.Errorf("X-Forwarded-User = %q, want %q", got, "stranger@gmail.com")
+	}
 }
 
 func TestIsAuthorized(t *testing.T) {
