@@ -563,21 +563,31 @@ func newCSRFCookie(signer *cookieSigner, expires time.Time, nonce, url string) (
 }
 
 func newCSRFCookieFromRequest(r *http.Request, signer *cookieSigner, cookieName string) (*CSRFCookie, error) {
-	cookie, err := r.Cookie(cookieName)
-	if err != nil {
-		return nil, fmt.Errorf("cookie %s not found in request: %w", cookieName, err)
+	// Check all cookies with the given name, not just the first one.
+	// Browsers may send multiple cookies with the same name if they were set
+	// with different domains (e.g., one without domain and one with a parent domain).
+	// We want to find the first valid (non-expired) cookie.
+	var sawExpired bool
+	for _, cookie := range r.Cookies() {
+		if cookie.Name != cookieName {
+			continue
+		}
+
+		var c *CSRFCookie
+		if err := signer.Decode(cookie.Value, &c); err != nil {
+			continue // Skip invalid cookies.
+		}
+
+		if !c.Expired() {
+			return c, nil
+		}
+		sawExpired = true
 	}
 
-	var c *CSRFCookie
-	if err = signer.Decode(cookie.Value, &c); err != nil {
-		return nil, err
-	}
-
-	if c.Expired() {
+	if sawExpired {
 		return nil, fmt.Errorf("cookie for oidc callback expired: %w", errExpiredCookie)
 	}
-
-	return c, nil
+	return nil, fmt.Errorf("cookie %s not found in request: %w", cookieName, http.ErrNoCookie)
 }
 
 func (c *CSRFCookie) Expired() bool {
